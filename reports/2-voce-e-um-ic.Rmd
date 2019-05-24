@@ -1,6 +1,6 @@
 ---
 title: "Implementando ICs"
-author: "Nazareno"
+author: "Hugo Gabriel"
 output:
   html_document:
     theme: readable
@@ -44,6 +44,73 @@ Utilizaremos ICs para estimar duas métricas sobre os usuários do LastFM em ger
 
 Crie intervalos com 95% de confiança.
 
+### Visão Geral dos Dados
+
+```{r}
+lastfm %>%
+    ggplot(aes(mediana_pop)) +
+    geom_histogram(bins=30)
+```
+
+
+### 1. Qual a proporção de novos artistas em geral escutada por usuários?
+
+#### Implementação Manual Bootstrap
+
+```{r}
+func_theta = function(d) {
+  df = d %>%
+        mutate(prop = news/(news + old))
+  mean(df$prop)
+}
+
+theta = func_theta(lastfm)
+
+set.seed(1212)
+
+amostra = lastfm %>%  
+  sample_n(200) 
+
+theta_c = func_theta(amostra)
+```
+
+```{r}
+repeticoes = 4000
+
+um_bootstrap <- function(df){
+  df_ = df %>% mutate(prop = news/(news + old))
+  prop = df_$prop
+  boot_x <- sample(prop,           # amostre dos dados
+                   size = NROW(news), # tamanho igual ao recebido
+                   replace = TRUE) # aqui é o bootstrap
+  
+  return(mean(boot_x))
+}
+```
+
+```{r}
+# A REAMOSTRAGEM
+reamostragens = tibble(i = 1:repeticoes) %>% 
+  mutate(theta_c_s = map_dbl(i, ~ um_bootstrap(lastfm)))
+
+reamostragens
+```
+
+
+```{r}
+intervalo = reamostragens %>% 
+  mutate(erro = theta_c_s - theta_c) %>% 
+  summarise(erro_i = quantile(erro, .05), 
+            erro_s = quantile(erro, .95))
+
+intervalo = intervalo %>% 
+  mutate(valor_i = theta_c + erro_i, 
+         valor_s = theta_c + erro_s)
+
+intervalo
+```
+
+#### Usando a Biblioteca Boot
 
 ```{r}
 library(boot)
@@ -83,36 +150,99 @@ ci %>%
          y = "Proporção de novos artistas")
 ```
 
+### 2. Correlação entre a popularidade mediana dos artistas escutados e a proporção dos artistas escutados que eram novos.
 
-## 2. Para os usuários que gostam de música muito pop (mediana_pop > 5), qual a correlação entre a popularidade mediana dos artistas escutado e a proporção dos artistas escutados que eram novos. 
+#### Implementação Manual Bootstrap
 
 ```{r}
-theta_2 <- function(d, i) {
+func_theta = function(d) {
+  df = d %>%
+      filter(mediana_pop > 5) %>%
+        mutate(prop = news/(news + old),
+               cor = cor(mediana_pop, prop))
+  mean(df$cor)
+}
+
+theta = func_theta(lastfm)
+
+set.seed(1212)
+
+amostra = lastfm %>%  
+  sample_n(200) 
+
+theta_c = func_theta(amostra)
+```
+
+```{r}
+repeticoes = 4000
+
+um_bootstrap <- function(df){
+  df_ = df %>% 
+      filter(mediana_pop > 5) %>%
+      mutate(prop = news/(news + old),
+             cor = cor(mediana_pop, prop))
+  
+  cor = df_$cor
+  boot_x <- sample(cor,           # amostre dos dados
+                   size = NROW(news), # tamanho igual ao recebido
+                   replace = TRUE) # aqui é o bootstrap
+  
+  return(mean(boot_x))
+}
+```
+
+```{r}
+# A REAMOSTRAGEM
+reamostragens = tibble(i = 1:repeticoes) %>% 
+  mutate(theta_c_s = map_dbl(i, ~ um_bootstrap(lastfm)))
+
+reamostragens
+```
+
+```{r}
+intervalo = reamostragens %>% 
+  mutate(erro = theta_c_s - theta_c) %>% 
+  summarise(erro_i = quantile(erro, .05), 
+            erro_s = quantile(erro, .95))
+
+intervalo = intervalo %>% 
+  mutate(valor_i = theta_c + erro_i, 
+         valor_s = theta_c + erro_s)
+
+intervalo
+```
+
+#### Usando a Biblioteca Boot
+
+
+```{r}
+library(boot)
+library(broom)
+
+theta <- function(d, i) {
     df = d %>%
-        slice(i) %>%
         filter(mediana_pop > 5) %>%
-        mutate(prop = news/(news+old))
-    
-    cor(df$prop, df$mediana_pop)
+        slice(i) %>%
+        mutate(prop = news/(news + old),
+               cor = cor(mediana_pop, prop))
+    mean(df$cor)
     
 }
 
-booted_2 <- boot(data = lastfm, 
-               statistic = theta_2, 
+booted <- boot(data = lastfm, 
+               statistic = theta, 
                R = 2000)
 
-ci_2 = tidy(booted_2, 
+ci = tidy(booted, 
           conf.level = .95,
           conf.method = "bca",
           conf.int = TRUE)
 
-glimpse(ci_2)
-
+glimpse(ci)
 ```
 
-
 ```{r}
-ci_2 %>%
+ci %>%
     ggplot(aes(
         x = "",
         y = statistic,
@@ -122,12 +252,8 @@ ci_2 %>%
     geom_pointrange() +
     geom_point(size = 3) + 
     labs(x = "", 
-         y = "Correlação entre a popularidade mediana dos artistas e a proporção dos artistas novos")
+         y = "Proporção de novos artistas")
 ```
-
-
-
-
 
 
 
