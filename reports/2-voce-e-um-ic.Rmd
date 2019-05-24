@@ -15,7 +15,12 @@ output:
 
 ```{r setup, include=FALSE, message=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
 library(tidyverse)
+library(boot)
+library(broom)
+library(gridExtra)
+
 theme_set(theme_bw())
 ```
 
@@ -46,14 +51,35 @@ Crie intervalos com 95% de confiança.
 
 ### Visão Geral dos Dados
 
+Os histogramas abaixo nos não uma visão geral do comportamento dos dados
+
 ```{r}
-lastfm %>%
+p1 <- lastfm %>%
     ggplot(aes(mediana_pop)) +
-    geom_histogram(bins=30)
+    geom_histogram(bins=30) +
+    labs(x='Mediana da Popularidade')
+
+p2 <- lastfm %>%
+    ggplot(aes(news)) +
+    geom_histogram(bins=30) +
+    labs(x='Novos Artistas')
+
+p3 <-lastfm %>%
+    ggplot(aes(old)) +
+    geom_histogram(bins=30)+
+    labs(x='Artistas Corriqueiros')
+
+
+grid.arrange(p1,p2,p3)
 ```
 
+Podemos perceber que a mediana da popularidade dos artistas escutados se concentra entre 5.5 e 6.
+O número de artistas novos escutados está, em sua maioria, entre 0 e 30.
+Jã o número de artistas corriqueiros de um usuários está entre 20 e 40.
 
 ### 1. Qual a proporção de novos artistas em geral escutada por usuários?
+
+A proporção será calculada como o **nº de artistas novos / nº total de artistas**
 
 #### Implementação Manual Bootstrap
 
@@ -64,14 +90,9 @@ func_theta = function(d) {
   mean(df$prop)
 }
 
-theta = func_theta(lastfm)
+theta_c = func_theta(lastfm)
 
-set.seed(1212)
-
-amostra = lastfm %>%  
-  sample_n(200) 
-
-theta_c = func_theta(amostra)
+theta_c
 ```
 
 ```{r}
@@ -81,7 +102,7 @@ um_bootstrap <- function(df){
   df_ = df %>% mutate(prop = news/(news + old))
   prop = df_$prop
   boot_x <- sample(prop,           # amostre dos dados
-                   size = NROW(news), # tamanho igual ao recebido
+                   size = NROW(prop), # tamanho igual ao recebido
                    replace = TRUE) # aqui é o bootstrap
   
   return(mean(boot_x))
@@ -100,8 +121,8 @@ reamostragens
 ```{r}
 intervalo = reamostragens %>% 
   mutate(erro = theta_c_s - theta_c) %>% 
-  summarise(erro_i = quantile(erro, .05), 
-            erro_s = quantile(erro, .95))
+  summarise(erro_i = quantile(erro, .025), 
+            erro_s = quantile(erro, .975))
 
 intervalo = intervalo %>% 
   mutate(valor_i = theta_c + erro_i, 
@@ -113,9 +134,6 @@ intervalo
 #### Usando a Biblioteca Boot
 
 ```{r}
-library(boot)
-library(broom)
-
 theta <- function(d, i) {
     df = d %>%
         slice(i) %>%
@@ -123,6 +141,7 @@ theta <- function(d, i) {
     mean(df$prop)
     
 }
+set.seed(1212)
 
 booted <- boot(data = lastfm, 
                statistic = theta, 
@@ -150,12 +169,23 @@ ci %>%
          y = "Proporção de novos artistas")
 ```
 
+
+**Interpretação**
+Com a implementação manual temos um theta de *0.242366* e o CI = [0.08791209, 0.4863636] e com a implemtação da biblioteca boot o theta é *0.242366* e o CI = [0.2314294, 0.2545381]. (Nos dois casos foi utilizado 95% de confiança).
+
+Podemos ver que os thetas foram iguais e indicam uma relação positiva e fraca entre a variáveis.
+
+Vale ressaltar que o intervalo da implementação manual foi bem mais amplo que o da implementação utilizando a biblioteca.
+
+
 ### 2. Correlação entre a popularidade mediana dos artistas escutados e a proporção dos artistas escutados que eram novos.
+
+Utilizaremos o cálculo da proporção das questão anterior e calcularemos a correlação entre essa métrica e a mediana da popularidade dos artistas
 
 #### Implementação Manual Bootstrap
 
 ```{r}
-func_theta = function(d) {
+func_theta_2 = function(d) {
   df = d %>%
       filter(mediana_pop > 5) %>%
         mutate(prop = news/(news + old),
@@ -163,62 +193,51 @@ func_theta = function(d) {
   mean(df$cor)
 }
 
-theta = func_theta(lastfm)
+theta_c_2 = func_theta_2(lastfm)
 
-set.seed(1212)
-
-amostra = lastfm %>%  
-  sample_n(200) 
-
-theta_c = func_theta(amostra)
+theta_c_2
 ```
 
 ```{r}
 repeticoes = 4000
 
-um_bootstrap <- function(df){
+um_bootstrap_2 <- function(df){
   df_ = df %>% 
       filter(mediana_pop > 5) %>%
-      mutate(prop = news/(news + old),
-             cor = cor(mediana_pop, prop))
-  
-  cor = df_$cor
-  boot_x <- sample(cor,           # amostre dos dados
-                   size = NROW(news), # tamanho igual ao recebido
+      mutate(prop = news/(news + old))
+
+  boot_x <- sample_n(df_,           # amostre dos dados
+                   size = NROW(df_), # tamanho igual ao recebido
                    replace = TRUE) # aqui é o bootstrap
   
-  return(mean(boot_x))
+  return(cor(boot_x$mediana_pop, boot_x$prop))
 }
 ```
 
 ```{r}
 # A REAMOSTRAGEM
 reamostragens = tibble(i = 1:repeticoes) %>% 
-  mutate(theta_c_s = map_dbl(i, ~ um_bootstrap(lastfm)))
+  mutate(theta_c_s = map_dbl(i, ~ um_bootstrap_2(lastfm)))
 
 reamostragens
 ```
 
 ```{r}
 intervalo = reamostragens %>% 
-  mutate(erro = theta_c_s - theta_c) %>% 
-  summarise(erro_i = quantile(erro, .05), 
-            erro_s = quantile(erro, .95))
+  mutate(erro = theta_c_s - theta_c_2) %>% 
+  summarise(erro_i = quantile(erro, .025), 
+            erro_s = quantile(erro, .975))
 
 intervalo = intervalo %>% 
-  mutate(valor_i = theta_c + erro_i, 
-         valor_s = theta_c + erro_s)
+  mutate(valor_i = theta_c_2 + erro_i, 
+         valor_s = theta_c_2 + erro_s)
 
 intervalo
 ```
 
 #### Usando a Biblioteca Boot
 
-
 ```{r}
-library(boot)
-library(broom)
-
 theta <- function(d, i) {
     df = d %>%
         filter(mediana_pop > 5) %>%
@@ -229,6 +248,8 @@ theta <- function(d, i) {
     
 }
 
+set.seed(123)
+
 booted <- boot(data = lastfm, 
                statistic = theta, 
                R = 2000)
@@ -255,6 +276,9 @@ ci %>%
          y = "Proporção de novos artistas")
 ```
 
+**Interpretação**
+Com a implementação manual temos um theta de *-0.05679804* e o CI = [-0.1775759, 0.06536497] e com a implemtação da biblioteca boot o theta é *-0.05679804* e o CI = [-0.1776679, 0.06605597] - ambos com 95% de confiança.
 
+Podemos ver que os theta nos dois casos foi o mesmo e indicam uma relação negativa e fraca entre a variáveis. No entanto os intervaços de confiança incluem o zero o que no impede de afirmar que tal relação realmente existe.
 
 
